@@ -41,28 +41,55 @@ jobs:
 
       - name: Wait for EC2 Instance to Start
         run: aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+		
+	  - name: Ensure EC2 Instance Is Fully Initialized
+        run: |
+          while true; do
+            INSTANCE_STATE=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceState.Name" --output text)
+            SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].SystemStatus.Status" --output text)
+            INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text)
+ 
+            echo "Current State: $INSTANCE_STATE | System Status: $SYSTEM_STATUS | Instance Status: $INSTANCE_STATUS"
+ 
+            if [[ "$INSTANCE_STATE" == "running" && "$SYSTEM_STATUS" == "ok" && "$INSTANCE_STATUS" == "ok" ]]; then
+              echo "Instance is fully initialized!"
+              break
+            fi
+            sleep 10
+          done
 
       - name: Setup SSH Key for EC2 Access
         run: |
           echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > private-key.pem
           chmod 600 private-key.pem
 
+      - name: Wait for SSH Availability
+        run: |
+          INSTANCE_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+
+          until ssh -i private-key.pem -o ConnectTimeout=5 -o StrictHostKeyChecking=no ubuntu@$INSTANCE_IP "exit" 2>/dev/null; do
+            echo "Waiting for EC2 SSH to be ready..."
+            sleep 10
+          done
+          
+          echo "EC2 instance is SSH-ready!"
+
       - name: Install AWS CLI in EC2
         run: |
-          ssh -i private-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem ubuntu@$INSTANCE_IP << EOF
             sudo apt update
             sudo apt install -y awscli
           EOF
 
       - name: Verify AWS CLI Installation
         run: |
-          ssh -i private-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem ubuntu@$INSTANCE_IP << EOF
             aws --version
           EOF
 
       - name: Check for Existing Docker Image in ECR
         run: |
-          ssh -i private-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem ubuntu@$INSTANCE_IP << EOF
             REPO_NAME=my-aosp-image
             IMAGE_EXISTS=$(aws ecr list-images --repository-name $REPO_NAME --query 'imageIds[*].imageTag' --output text | grep -q . && echo "exists" || echo "none")
             echo "IMAGE_EXISTS=$IMAGE_EXISTS"
@@ -71,7 +98,7 @@ jobs:
       - name: Build & Push Docker Image If Not Found
         if: env.IMAGE_EXISTS == 'none'
         run: |
-          ssh -i private-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem ubuntu@$INSTANCE_IP << EOF
             mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
 
             echo "FROM ubuntu:20.04" > Dockerfile
@@ -93,7 +120,7 @@ jobs:
 
       - name: Pull & Run Docker Container
         run: |
-          ssh -i private-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem ubuntu@$INSTANCE_IP << EOF
             aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
             
             docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-aosp-image
@@ -102,14 +129,14 @@ jobs:
 
       - name: Exec into Container and Run AOSP Build Commands
         run: |
-          ssh -i private-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem ubuntu@$INSTANCE_IP << EOF
             echo "Executing repo commands inside container..."
             docker exec -it aosp-container bash -c "cd /workspace && repo init -u https://android.googlesource.com/platform/manifest && repo sync"
           EOF
 
       - name: Check Compilation Logs
         run: |
-          ssh -i private-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem ubuntu@$INSTANCE_IP << EOF
             echo "Checking build logs..."
             docker logs aosp-container | tail -n 50
           EOF
