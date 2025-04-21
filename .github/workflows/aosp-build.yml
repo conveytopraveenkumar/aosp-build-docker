@@ -1,35 +1,36 @@
 name: AOSP Repo Setup in EC2 with Docker
-
+ 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-
+ 
 jobs:
   setup_aosp:
     runs-on: ubuntu-latest
     steps:
-
+ 
       - name: Checkout Repository
         uses: actions/checkout@v3
-
+ 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
-          
       - name: Launch EC2 Instance (Auto-Assign Ubuntu AMI)
         run: |
+          # Fetch the latest Ubuntu AMI dynamically
           UBUNTU_AMI_ID=$(aws ec2 describe-images --owners 099720109477 \
             --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*" \
             --query 'Images | sort_by(@, &CreationDate)[-1].ImageId' --output text)
-      
+          # Fetch default subnet ID dynamically
           SUBNET_ID=$(aws ec2 describe-subnets --query 'Subnets[0].SubnetId' --output text)
+          # Fetch default security group dynamically
           SG_ID=$(aws ec2 describe-security-groups --query 'SecurityGroups[0].GroupId' --output text)
-      
+          # Launch EC2 instance with dynamically assigned values
           INSTANCE_ID=$(aws ec2 run-instances --image-id $UBUNTU_AMI_ID \
             --count 1 --instance-type t2.micro \
             --iam-instance-profile Name=EC2SSMInstanceProfile1 \
@@ -37,78 +38,84 @@ jobs:
             --security-group-ids $SG_ID \
             --subnet-id $SUBNET_ID \
             --query "Instances[0].InstanceId" --output text)
-      
           echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
-
+ 
+ 
       - name: Wait for EC2 Instance to Start
         run: aws ec2 wait instance-running --instance-ids $INSTANCE_ID
-
+ 
       - name: Ensure EC2 Instance Is Fully Initialized
         run: |
           while true; do
             INSTANCE_STATE=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceState.Name" --output text)
             SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].SystemStatus.Status" --output text)
             INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text)
-
+ 
             echo "Current State: $INSTANCE_STATE | System Status: $SYSTEM_STATUS | Instance Status: $INSTANCE_STATUS"
-
+ 
             if [[ "$INSTANCE_STATE" == "running" && "$SYSTEM_STATUS" == "ok" && "$INSTANCE_STATUS" == "ok" ]]; then
               echo "Instance is fully initialized!"
               break
             fi
             sleep 10
           done
-
+ 
       - name: Setup SSH Key for EC2 Access
         run: |
           echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > private-key.pem
           chmod 600 private-key.pem
-
-      - name: Check for Existing Docker Image in ECR
+ 
+      - name: Install Docker and Fix Permissions in EC2
         run: |
-          REPO_NAME=my-aosp-image
-          IMAGE_EXISTS=$(aws ecr list-images --repository-name $REPO_NAME --query 'imageIds[0]' --output text || echo "none")
-          echo "IMAGE_EXISTS=$IMAGE_EXISTS" >> $GITHUB_ENV
-
-      - name: Build & Push Docker Image If Not Found
-        if: env.IMAGE_EXISTS == 'none'
+          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+            sudo apt update && sudo apt install -y docker.io git curl python3 python3-pip
+ 
+            # Install repo manually
+            mkdir -p ~/bin
+            curl -o ~/bin/repo https://storage.googleapis.com/git-repo-downloads/repo
+            chmod a+x ~/bin/repo
+            sudo mv ~/bin/repo /usr/local/bin/repo
+            sudo ln -s /usr/local/bin/repo /usr/bin/repo
+            sudo usermod -aG docker ubuntu
+            newgrp docker
+            sudo systemctl restart docker
+          EOF
+ 
+      - name: Build and Run Docker Container for AOSP (Without Repo Init)
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
             mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
-            
+ 
             echo "FROM ubuntu:20.04" > Dockerfile
-            echo "RUN apt update && apt install -y git curl python3 python3-pip repo" >> Dockerfile
+            echo "RUN apt update && apt install -y git curl python3 python3-pip" >> Dockerfile
+            echo "RUN mkdir -p /usr/local/bin && curl -o /usr/local/bin/repo https://storage.googleapis.com/git-repo-downloads/repo" >> Dockerfile
+            echo "RUN chmod a+x /usr/local/bin/repo && ln -s /usr/local/bin/repo /usr/bin/repo" >> Dockerfile
             echo "WORKDIR /workspace" >> Dockerfile
             echo "COPY entrypoint.sh /entrypoint.sh" >> Dockerfile
             echo "RUN chmod +x /entrypoint.sh" >> Dockerfile
             echo "ENTRYPOINT [\"/entrypoint.sh\"]" >> Dockerfile
-            
+ 
             echo "#!/bin/bash" > entrypoint.sh
-            echo "exec tail -f /dev/null" >> entrypoint.sh
+            echo "exec tail -f /dev/null" >> entrypoint.sh  # Keeps container running
             chmod +x entrypoint.sh
-            
-            docker build -t my-aosp-image .
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-            docker tag my-aosp-image ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-aosp-image
-            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-aosp-image
+ 
+            echo "Building Docker container..."
+            docker build -t aosp-builder .
+ 
+            echo "Verifying Docker image exists..."
+            docker images | grep aosp-builder || { echo "Docker image build failed"; exit 1; }
+ 
+            echo "Running Docker container in detached mode..."
+            docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace aosp-builder
           EOF
-
-      - name: Pull & Run Docker Container
-        run: |
-          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-            
-            docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-aosp-image
-            docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-aosp-image
-          EOF
-
-      - name: Check Docker Container Status
+ 
+      - name: Check if Docker Container Started Correctly
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
             docker ps -a
             docker logs aosp-container
           EOF
-
+ 
       - name: Exec into Container and Manually Run AOSP Commands
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
