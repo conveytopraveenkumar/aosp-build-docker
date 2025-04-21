@@ -24,7 +24,7 @@ jobs:
       - name: Launch EC2 Instance
         run: |
           INSTANCE_ID=$(aws ec2 run-instances --image-id ami-09eb231ad55c3963d \
-            --count 1 --instance-type t2.micro \
+            --count 1 --instance-type t2.large \
             --iam-instance-profile Name=EC2SSMInstanceProfile1 \
             --key-name new-key \
             --security-group-ids sg-0226bb335bbecbf05 \
@@ -51,52 +51,55 @@ jobs:
             sleep 10
           done
 
+      - name: Setup SSH Key for EC2 Access
+        run: |
+          echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > private-key.pem
+          chmod 600 private-key.pem
+
       - name: Install Docker and Fix Permissions in EC2
         run: |
-          aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --targets "[{\"Key\":\"InstanceIds\",\"Values\":[\"$INSTANCE_ID\"]}]" \
-            --parameters '{"commands":[
-              "sudo apt update && sudo apt install -y docker.io unzip git repo",
-              "sudo usermod -aG docker ubuntu",
-              "newgrp docker",
-              "sudo systemctl restart docker"
-            ]}' \
-            --region us-east-1
-
-      - name: Build and Run Docker Container for AOSP
-        run: |
-          ssh -t -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
-            sudo apt update && sudo apt install -y docker.io git unzip repo
+          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+            sudo apt update && sudo apt install -y docker.io unzip git repo
             sudo usermod -aG docker ubuntu
             newgrp docker
             sudo systemctl restart docker
-      
+          EOF
+
+      - name: Build and Run Docker Container for AOSP
+        run: |
+          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
             mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
-      
+
             echo "FROM ubuntu:20.04" > Dockerfile
             echo "RUN apt update && apt install -y git curl python3 python3-pip repo" >> Dockerfile
             echo "WORKDIR /workspace" >> Dockerfile
             echo "COPY entrypoint.sh /entrypoint.sh" >> Dockerfile
             echo "RUN chmod +x /entrypoint.sh" >> Dockerfile
             echo "ENTRYPOINT [\"/entrypoint.sh\"]" >> Dockerfile
-      
+
             echo "#!/bin/bash" > entrypoint.sh
-            echo "tail -f /dev/null" >> entrypoint.sh
-      
+            echo "repo init -u https://android.googlesource.com/platform/manifest" >> entrypoint.sh
+            echo "repo sync" >> entrypoint.sh
+            echo "make -j\$(nproc)" >> entrypoint.sh
             chmod +x entrypoint.sh
-      
+
             echo "Building Docker container..."
             docker build -t aosp-builder .
-      
+
             echo "Running Docker container in detached mode..."
             docker run -d --name aosp-container -v /home/ubuntu/aosp:/workspace aosp-builder
           EOF
 
+      - name: Check if Docker Container Started Correctly
+        run: |
+          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+            docker ps -a
+            docker logs aosp-container
+          EOF
 
       - name: Exec into Container and Run AOSP Commands
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
             echo "Executing repo commands inside container..."
             docker exec aosp-container bash -c "repo init -u https://android.googlesource.com/platform/manifest && repo sync"
           EOF
