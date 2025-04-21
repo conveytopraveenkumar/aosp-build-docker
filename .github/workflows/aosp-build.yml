@@ -73,7 +73,7 @@ jobs:
             sudo systemctl restart docker
           EOF
 
-      - name: Build and Run Docker Container for AOSP
+      - name: Build and Run Docker Container for AOSP (Without Repo Init)
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
             mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
@@ -88,10 +88,7 @@ jobs:
             echo "ENTRYPOINT [\"/entrypoint.sh\"]" >> Dockerfile
 
             echo "#!/bin/bash" > entrypoint.sh
-            echo "if ! command -v repo &> /dev/null; then echo 'Error: repo command not found. Exiting.'; exit 1; fi" >> entrypoint.sh
-            echo "repo init -u https://android.googlesource.com/platform/manifest" >> entrypoint.sh
-            echo "repo sync || { echo 'Repo sync failed. Exiting.'; exit 1; }" >> entrypoint.sh
-            echo "make -j\$(nproc)" >> entrypoint.sh
+            echo "exec tail -f /dev/null" >> entrypoint.sh  # Keeps container running
             chmod +x entrypoint.sh
 
             echo "Building Docker container..."
@@ -101,7 +98,7 @@ jobs:
             docker images | grep aosp-builder || { echo "Docker image build failed"; exit 1; }
 
             echo "Running Docker container in detached mode..."
-            docker run -d --name aosp-container -v /home/ubuntu/aosp:/workspace aosp-builder
+            docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace aosp-builder
           EOF
 
       - name: Check if Docker Container Started Correctly
@@ -111,7 +108,7 @@ jobs:
             docker logs aosp-container
           EOF
 
-      - name: Exec into Container and Run AOSP Commands
+      - name: Exec into Container and Manually Run AOSP Commands
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
             echo "Executing repo commands inside container..."
