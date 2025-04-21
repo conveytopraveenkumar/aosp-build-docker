@@ -1,0 +1,97 @@
+name: AOSP Repo Setup in EC2 with Docker
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  setup_aosp:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Launch EC2 Instance
+        run: |
+          INSTANCE_ID=$(aws ec2 run-instances --image-id ami-09eb231ad55c3963d \
+            --count 1 --instance-type t2.large \  # Larger instance for AOSP build
+            --iam-instance-profile Name=EC2SSMInstanceProfile \
+            --key-name my-key \
+            --security-group-ids sg-0226bb335bbecbf05 \
+            --subnet-id subnet-089b826030629808d \
+            --query "Instances[0].InstanceId" --output text)
+          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+
+      - name: Wait for EC2 Instance to Start
+        run: aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+
+      - name: Ensure EC2 Instance Is Fully Initialized
+        run: |
+          while true; do
+            INSTANCE_STATE=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceState.Name" --output text)
+            SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].SystemStatus.Status" --output text)
+            INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text)
+
+            echo "Current State: $INSTANCE_STATE | System Status: $SYSTEM_STATUS | Instance Status: $INSTANCE_STATUS"
+
+            if [[ "$INSTANCE_STATE" == "running" && "$SYSTEM_STATUS" == "ok" && "$INSTANCE_STATUS" == "ok" ]]; then
+              echo "Instance is fully initialized!"
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Install Docker, AWS CLI, and Repo via SSM
+        run: |
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --targets "[{\"Key\":\"InstanceIds\",\"Values\":[\"$INSTANCE_ID\"]}]" \
+            --parameters '{"commands":[
+              "sudo apt update && sudo apt install -y docker.io unzip git repo",
+              "curl -o awscliv2.zip \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\"",
+              "unzip awscliv2.zip",
+              "sudo ./aws/install",
+              "aws --version || { echo \"AWS CLI installation failed!\"; exit 1; }",
+              "repo --version || { echo \"Repo installation failed!\"; exit 1; }",
+              "echo \"Docker installation completed!\""
+            ]}' \
+            --region us-east-1
+
+      - name: Build and Run Docker Container for AOSP
+        run: |
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --targets "[{\"Key\":\"InstanceIds\",\"Values\":[\"$INSTANCE_ID\"]}]" \
+            --parameters '{"commands":[
+              "mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp",
+              "echo \"Creating Dockerfile...\"",
+              "cat <<EOF > Dockerfile
+              FROM ubuntu:20.04
+              RUN apt update && apt install -y git curl python3 python3-pip repo
+              WORKDIR /workspace
+              COPY entrypoint.sh /entrypoint.sh
+              RUN chmod +x /entrypoint.sh
+              ENTRYPOINT [\"/entrypoint.sh\"]
+              EOF",
+              "echo \"Creating entrypoint script...\"",
+              "cat <<EOF > entrypoint.sh
+              #!/bin/bash
+              repo init -u https://android.googlesource.com/platform/manifest
+              repo sync
+              make -j$(nproc)
+              EOF",
+              "echo \"Building and running Docker container...\"",
+              "docker build -t aosp-builder .",
+              "docker run --rm -v /home/ubuntu/aosp:/workspace aosp-builder"
+            ]}' \
+            --region us-east-1
