@@ -68,24 +68,39 @@ jobs:
       - name: Build and Run Docker Container for AOSP
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+            sudo apt update && sudo apt install -y docker.io git curl python3 python3-pip
+            
+            # Install repo manually
+            mkdir -p ~/bin
+            curl -o ~/bin/repo https://storage.googleapis.com/git-repo-downloads/repo
+            chmod a+x ~/bin/repo
+            export PATH=~/bin:$PATH
+            
+            sudo usermod -aG docker ubuntu
+            newgrp docker
+            sudo systemctl restart docker
+      
             mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
-
+      
             echo "FROM ubuntu:20.04" > Dockerfile
-            echo "RUN apt update && apt install -y git curl python3 python3-pip repo" >> Dockerfile
+            echo "RUN apt update && apt install -y git curl python3 python3-pip" >> Dockerfile
             echo "WORKDIR /workspace" >> Dockerfile
             echo "COPY entrypoint.sh /entrypoint.sh" >> Dockerfile
             echo "RUN chmod +x /entrypoint.sh" >> Dockerfile
             echo "ENTRYPOINT [\"/entrypoint.sh\"]" >> Dockerfile
-
+      
             echo "#!/bin/bash" > entrypoint.sh
             echo "repo init -u https://android.googlesource.com/platform/manifest" >> entrypoint.sh
             echo "repo sync" >> entrypoint.sh
             echo "make -j\$(nproc)" >> entrypoint.sh
             chmod +x entrypoint.sh
-
+      
             echo "Building Docker container..."
             docker build -t aosp-builder .
-
+      
+            echo "Verifying Docker image exists..."
+            docker images | grep aosp-builder || { echo "Docker image build failed"; exit 1; }
+      
             echo "Running Docker container in detached mode..."
             docker run -d --name aosp-container -v /home/ubuntu/aosp:/workspace aosp-builder
           EOF
