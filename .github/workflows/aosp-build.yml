@@ -24,7 +24,7 @@ jobs:
       - name: Launch EC2 Instance
         run: |
           INSTANCE_ID=$(aws ec2 run-instances --image-id ami-09eb231ad55c3963d \
-            --count 1 --instance-type t2.large \
+            --count 1 --instance-type t2.micro \
             --iam-instance-profile Name=EC2SSMInstanceProfile1 \
             --key-name new-key \
             --security-group-ids sg-0226bb335bbecbf05 \
