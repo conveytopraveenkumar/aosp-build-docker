@@ -66,7 +66,7 @@ jobs:
 
       - name: Build and Run Docker Container for AOSP
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+          ssh -t -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
             sudo apt update && sudo apt install -y docker.io git unzip repo
             sudo usermod -aG docker ubuntu
             newgrp docker
@@ -92,6 +92,7 @@ jobs:
             echo "Running Docker container in detached mode..."
             docker run -d --name aosp-container -v /home/ubuntu/aosp:/workspace aosp-builder
           EOF
+
 
       - name: Exec into Container and Run AOSP Commands
         run: |
