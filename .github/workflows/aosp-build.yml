@@ -24,13 +24,14 @@ jobs:
       - name: Launch EC2 Instance
         run: |
           INSTANCE_ID=$(aws ec2 run-instances --image-id ami-09eb231ad55c3963d \
-            --count 1 --instance-type t2.large \  # Larger instance for AOSP build
+            --count 1 --instance-type t2.micro \
             --iam-instance-profile Name=EC2SSMInstanceProfile1 \
             --key-name my-key \
             --security-group-ids sg-0226bb335bbecbf05 \
             --subnet-id subnet-089b826030629808d \
             --query "Instances[0].InstanceId" --output text)
           echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+
 
       - name: Wait for EC2 Instance to Start
         run: aws ec2 wait instance-running --instance-ids $INSTANCE_ID
