@@ -20,7 +20,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
 
       - name: Launch EC2 Instance
         run: |
@@ -61,4 +60,4 @@ jobs:
 
       - name: Upload Helloworld.txt to S3
         run: |
-          ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "aws s3 cp helloworld.txt s3://your-bucket-name/"
+          ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "aws s3 cp helloworld.txt s3://cicd-github-artifacts-bucket/"
