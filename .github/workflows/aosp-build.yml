@@ -42,21 +42,6 @@ jobs:
 
       - name: Wait for EC2 Instance to Start
         run: aws ec2 wait instance-running --instance-ids $INSTANCE_ID
-      - name: Ensure EC2 Instance Is Fully Initialized
-        run: |
-          while true; do
-            INSTANCE_STATE=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceState.Name" --output text)
-            SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].SystemStatus.Status" --output text)
-            INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text)
-  
-            echo "Current State: $INSTANCE_STATE | System Status: $SYSTEM_STATUS | Instance Status: $INSTANCE_STATUS"
-  
-            if [[ "$INSTANCE_STATE" == "running" && "$SYSTEM_STATUS" == "ok" && "$INSTANCE_STATUS" == "ok" ]]; then
-              echo "Instance is fully initialized!"
-              break
-            fi
-            sleep 10
-          done
 
       - name: Get EC2 Public IP
         run: |
@@ -69,6 +54,18 @@ jobs:
           echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > private-key.pem
           chmod 600 private-key.pem
 
+      - name: Verify SSH Connection
+        run: |
+          ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "echo 'SSH Connection Established'"
+
+      - name: Install AWS CLI on EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "
+            sudo apt update &&
+            sudo apt install awscli -y &&
+            aws --version
+          "
+
       - name: Create Helloworld.txt in EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "echo 'Hello, world!' > helloworld.txt"
@@ -76,3 +73,6 @@ jobs:
       - name: Upload Helloworld.txt to S3
         run: |
           ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "aws s3 cp helloworld.txt s3://cicd-github-artifacts-bucket/"
+
+      - name: Cleanup and Terminate Instance
+        run: aws ec2 terminate-instances --instance-ids $INSTANCE_ID
