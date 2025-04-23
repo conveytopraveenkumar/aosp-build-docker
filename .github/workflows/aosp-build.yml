@@ -93,7 +93,7 @@ jobs:
                 mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
 
                 echo "Creating Dockerfile..."
-                cat << 'DOCKERFILE' > Dockerfile
+                cat > Dockerfile << EOF_DOCKER
                 FROM ubuntu:20.04
                 RUN apt update && apt install -y git curl python3 python3-pip
                 RUN mkdir -p /usr/local/bin && curl -o /usr/local/bin/repo https://storage.googleapis.com/git-repo-downloads/repo
@@ -102,12 +102,13 @@ jobs:
                 COPY entrypoint.sh /entrypoint.sh
                 RUN chmod +x /entrypoint.sh
                 ENTRYPOINT ["/entrypoint.sh"]
-                DOCKERFILE
-
+                EOF_DOCKER
+                
                 echo "Creating Entrypoint script..."
                 echo "#!/bin/bash" > entrypoint.sh
                 echo "exec tail -f /dev/null" >> entrypoint.sh
                 chmod +x entrypoint.sh
+
 
                 echo "Building Docker image..."
                 docker build -t ghcr.io/${{ github.repository_owner }}/aosp-builder:latest . || {
