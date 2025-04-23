@@ -74,11 +74,11 @@ jobs:
       - name: Authenticate with GitHub Container Registry
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
-            echo "${{ secrets.NEW_GITHUB_TOKEN  }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+            echo "${{ secrets.GHCR_PAT   }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
           EOF
       - name: Authenticate with GitHub Container Registry
         run: |
-          echo "${{ secrets.NEW_GITHUB_TOKEN  }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+          echo "${{ secrets.GHCR_PAT   }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
       - name: Check and Use Prebuilt Docker Image from GHCR
         run: |
