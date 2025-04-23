@@ -108,15 +108,21 @@ jobs:
                     echo "❌ Failed to build Docker image!"
                     exit 1
                 }
-      
-                echo "Pushing Docker image to GHCR..."
-                echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-                docker push ghcr.io/${{ github.repository_owner }}/aosp-builder:latest && echo "✅ Image successfully pushed!"
-      
-                echo "Running newly built container..."
-                docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace ghcr.io/${{ github.repository_owner }}/aosp-builder:latest
+    
             fi
           EOF
+          
+      - name: Authenticate with GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build and Push Docker Image
+        run: |
+          echo "Building Docker image..."
+          docker build -t ghcr.io/${{ github.repository_owner }}/aosp-builder:latest .
+      
+          echo "Pushing Docker image to GHCR..."
+          docker push ghcr.io/${{ github.repository_owner }}/aosp-builder:latest && echo "✅ Image successfully pushed!"
 
       - name: Check if Docker Container Started Correctly
         run: |
