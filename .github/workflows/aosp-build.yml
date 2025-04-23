@@ -78,13 +78,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "echo 'Hello, world!' > helloworld.txt"
       - name: Upload Helloworld.txt to S3
         run: |
-          ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "aws s3 cp helloworld.txt s3://cicd-github-artifacts-bucket/"
-      - name: Generate Pre-Signed URL for Download
-        run: |
-          PRESIGNED_URL=$(aws s3 presign s3://cicd-github-artifacts-bucket/helloworld.txt --expires-in 3600)
-          echo "PRESIGNED_URL=$PRESIGNED_URL" >> $GITHUB_ENV
+          ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "aws s3 cp helloworld.txt s3://cicd-github-artifacts-bucket/
 
-      - name: Print wget and curl Commands for Download
+      - name: Download File from S3 to Local Downloads Folder
         run: |
-          echo "Download File via wget: wget \"$PRESIGNED_URL\""
-          echo "Download File via curl: curl -o helloworld.txt \"$PRESIGNED_URL\""
+          aws s3 cp s3://cicd-github-artifacts-bucket/helloworld.txt ~/Downloads/
