@@ -1,4 +1,4 @@
-name: AOSP Repo Setup in EC2 with Docker Image Check
+name: AOSP Repo Setup in EC2 with GHCR
 
 on:
   push:
@@ -41,6 +41,7 @@ jobs:
 
       - name: Wait for EC2 Instance to Start
         run: aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+
       - name: Ensure EC2 Instance Is Fully Initialized
         run: |
           while true; do
@@ -71,16 +72,22 @@ jobs:
             sudo systemctl restart docker
           EOF
 
-      - name: Check and Use Prebuilt Docker Image
+      - name: Authenticate with GitHub Container Registry
         run: |
           ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
-            IMAGE_EXISTS=\$(docker pull doredlap/aosp-builder:latest 2>&1 | grep 'not found')
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+          EOF
+
+      - name: Check and Use Prebuilt Docker Image from GHCR
+        run: |
+          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
+            IMAGE_EXISTS=\$(docker pull ghcr.io/${{ github.repository_owner }}/aosp-builder:latest 2>&1 | grep 'not found')
 
             if [[ -z "\$IMAGE_EXISTS" ]]; then
-              echo "Docker image found, running container..."
-              docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace doredlap/aosp-builder:latest
+              echo "Docker image found in GHCR, running container..."
+              docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace ghcr.io/${{ github.repository_owner }}/aosp-builder:latest
             else
-              echo "Docker image not found, building and pushing..."
+              echo "Docker image not found, building and pushing to GHCR..."
 
               mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
 
@@ -98,13 +105,12 @@ jobs:
               chmod +x entrypoint.sh
 
               echo "Building Docker image..."
-              docker build -t doredlap/aosp-builder:latest .
+              docker build -t ghcr.io/${{ github.repository_owner }}/aosp-builder:latest .
 
-              echo "Pushing Docker image to Docker Hub..."
-              docker login -u "doredlap" -p "${{ secrets.DOCKER_HUB_PASSWORD }}"
-              docker push doredlap/aosp-builder:latest
+              echo "Pushing Docker image to GitHub Container Registry..."
+              docker push ghcr.io/${{ github.repository_owner }}/aosp-builder:latest
 
-              docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace doredlap/aosp-builder:latest
+              docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace ghcr.io/${{ github.repository_owner }}/aosp-builder:latest
             fi
           EOF
 
