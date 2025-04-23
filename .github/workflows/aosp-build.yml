@@ -90,26 +90,17 @@ jobs:
                 docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace ghcr.io/${{ github.repository_owner }}/aosp-builder:latest
             else
                 echo "⚠️ Docker image not found, building and pushing to GHCR..."
-      
                 mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
-      
-                echo "Creating Dockerfile..."
-                cat > Dockerfile <<EOF_DOCKER
-                FROM ubuntu:20.04
-                RUN apt update && apt install -y git curl python3 python3-pip
-                RUN mkdir -p /usr/local/bin && curl -o /usr/local/bin/repo https://storage.googleapis.com/git-repo-downloads/repo
-                RUN chmod a+x /usr/local/bin/repo && ln -s /usr/local/bin/repo /usr/bin/repo
-                WORKDIR /workspace
-                COPY entrypoint.sh /entrypoint.sh
-                RUN chmod +x /entrypoint.sh
-                ENTRYPOINT ["/entrypoint.sh"]
-                EOF_DOCKER
-      
-                echo "Creating Entrypoint script..."
-                cat > entrypoint.sh <<EOF_SCRIPT
-                #!/bin/bash
-                exec tail -f /dev/null
-                EOF_SCRIPT
+                echo "FROM ubuntu:20.04" > Dockerfile
+                echo "RUN apt update && apt install -y git curl python3 python3-pip" >> Dockerfile
+                echo "RUN mkdir -p /usr/local/bin && curl -o /usr/local/bin/repo https://storage.googleapis.com/git-repo-downloads/repo" >> Dockerfile
+                echo "RUN chmod a+x /usr/local/bin/repo && ln -s /usr/local/bin/repo /usr/bin/repo" >> Dockerfile
+                echo "WORKDIR /workspace" >> Dockerfile
+                echo "COPY entrypoint.sh /entrypoint.sh" >> Dockerfile
+                echo "RUN chmod +x /entrypoint.sh" >> Dockerfile
+                echo "ENTRYPOINT [\"/entrypoint.sh\"]" >> Dockerfile
+                echo "#!/bin/bash" > entrypoint.sh
+                echo "exec tail -f /dev/null" >> entrypoint.sh
                 chmod +x entrypoint.sh
       
                 echo "Building Docker image..."
