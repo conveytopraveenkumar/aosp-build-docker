@@ -81,4 +81,4 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i private-key.pem ubuntu@$PUBLIC_IP "aws s3 cp helloworld.txt s3://cicd-github-artifacts-bucket/"
       - name: Download File from S3 to Local Downloads Folder
         run: |
-          aws s3 cp s3://cicd-github-artifacts-bucket/helloworld.txt ~/Downloads/
+          aws s3 cp s3://cicd-github-artifacts-bucket/helloworld.txt C:\Users\28317\Downloads\
