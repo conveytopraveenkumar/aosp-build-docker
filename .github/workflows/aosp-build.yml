@@ -79,21 +79,22 @@ jobs:
 
       - name: Check and Use Prebuilt Docker Image from GHCR
         run: |
-          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << EOF
-
+          ssh -i private-key.pem -o StrictHostKeyChecking=no ubuntu@$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text) << 'EOF'
+            set -e  # Stop execution on failure
             echo "Checking if Docker image exists in GHCR..."
-            IMAGE_EXISTS=$(docker pull ghcr.io/${{ github.repository_owner }}/aosp-builder:latest 2>&1 | grep -i "manifest unknown")
-
-            if [[ -z "$IMAGE_EXISTS" ]]; then
+            
+            docker pull ghcr.io/${{ github.repository_owner }}/aosp-builder:latest || IMAGE_NOT_FOUND="true"
+      
+            if [[ -z "$IMAGE_NOT_FOUND" ]]; then
                 echo "✅ Docker image found in GHCR, running container..."
                 docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace ghcr.io/${{ github.repository_owner }}/aosp-builder:latest
             else
                 echo "⚠️ Docker image not found, building and pushing to GHCR..."
-
+      
                 mkdir -p /home/ubuntu/aosp && cd /home/ubuntu/aosp
-
+      
                 echo "Creating Dockerfile..."
-                cat > Dockerfile << EOF_DOCKER
+                cat > Dockerfile <<EOF_DOCKER
                 FROM ubuntu:20.04
                 RUN apt update && apt install -y git curl python3 python3-pip
                 RUN mkdir -p /usr/local/bin && curl -o /usr/local/bin/repo https://storage.googleapis.com/git-repo-downloads/repo
@@ -103,22 +104,24 @@ jobs:
                 RUN chmod +x /entrypoint.sh
                 ENTRYPOINT ["/entrypoint.sh"]
                 EOF_DOCKER
-                
+      
                 echo "Creating Entrypoint script..."
-                echo "#!/bin/bash" > entrypoint.sh
-                echo "exec tail -f /dev/null" >> entrypoint.sh
+                cat > entrypoint.sh <<EOF_SCRIPT
+                #!/bin/bash
+                exec tail -f /dev/null
+                EOF_SCRIPT
                 chmod +x entrypoint.sh
-
-
+      
                 echo "Building Docker image..."
                 docker build -t ghcr.io/${{ github.repository_owner }}/aosp-builder:latest . || {
                     echo "❌ Failed to build Docker image!"
                     exit 1
                 }
-
+      
                 echo "Pushing Docker image to GHCR..."
+                echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
                 docker push ghcr.io/${{ github.repository_owner }}/aosp-builder:latest && echo "✅ Image successfully pushed!"
-
+      
                 echo "Running newly built container..."
                 docker run -d --name aosp-container --restart unless-stopped -v /home/ubuntu/aosp:/workspace ghcr.io/${{ github.repository_owner }}/aosp-builder:latest
             fi
