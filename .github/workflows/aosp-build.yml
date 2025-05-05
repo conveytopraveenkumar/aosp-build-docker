@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read  
+
 jobs:
   setup_aosp:
     runs-on: ubuntu-latest
