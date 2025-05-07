@@ -14,17 +14,13 @@ jobs:
   setup_aosp:
     runs-on: ubuntu-latest
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v3
-
       - name: Configure AWS Credentials
-        #uses: aws-actions/configure-aws-credentials@v3
         env:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
-
       - name: Launch EC2 Instance
         run: |
           UBUNTU_AMI_ID=$(aws ec2 describe-images --owners 099720109477 \
